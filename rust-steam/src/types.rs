@@ -115,6 +115,11 @@ impl SteamID {
     pub fn is_valid(&self) -> bool {
         self.id != 0
     }
+
+    /// Render SteamID as STEAM_X:Y:Z format
+    pub fn render(&self) -> String {
+        format!("STEAM_0:{}:{}", self.id & 1, (self.id >> 1) & 0x7FFFFFF)
+    }
 }
 
 impl fmt::Display for SteamID {
