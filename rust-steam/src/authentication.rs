@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::fmt;
+use rsa::{RsaPublicKey, PaddingScheme, PublicKey};
+use num_bigint::BigUint;
+use hex;
+use rand;
 
 /// 认证会话详情
 #[derive(Debug, Clone)]
@@ -329,10 +333,28 @@ impl SteamAuthSession {
 
     /// 加密密码
     fn encrypt_password(&self, password: &str, rsa_key: &RSAKey) -> Result<String, SteamError> {
-        // 简化的RSA加密实现
-        // 在实际应用中，这里应该使用真正的RSA加密
-        let combined = format!("{}:{}:{}", password, rsa_key.modulus, rsa_key.exponent);
-        Ok(base64_encode(combined.as_bytes()))
+        // 解析RSA公钥参数
+        let modulus_bytes = hex::decode(&rsa_key.modulus)
+            .map_err(|e| SteamError::Unknown { message: format!("无效的RSA模数: {}", e) })?;
+        let exponent_bytes = hex::decode(&rsa_key.exponent)
+            .map_err(|e| SteamError::Unknown { message: format!("无效的RSA指数: {}", e) })?;
+        
+        let n = BigUint::from_bytes_be(&modulus_bytes);
+        let e = BigUint::from_bytes_be(&exponent_bytes);
+        
+        // 创建RSA公钥
+        let public_key = RsaPublicKey::new(n, e)
+            .map_err(|e| SteamError::Unknown { message: format!("创建RSA公钥失败: {}", e) })?;
+        
+        // 加密密码
+        let password_bytes = password.as_bytes();
+        let mut rng = rand::thread_rng();
+        let encrypted = public_key
+            .encrypt(&mut rng, PaddingScheme::new_pkcs1v15_encrypt(), password_bytes)
+            .map_err(|e| SteamError::Unknown { message: format!("RSA加密失败: {}", e) })?;
+        
+        // 返回base64编码的加密结果
+        Ok(base64_encode(&encrypted))
     }
 
     /// 开始认证会话

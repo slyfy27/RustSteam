@@ -306,7 +306,8 @@ impl SteamClient {
         if let Some(ref manager) = *self.connection_manager.read().await {
             manager.send_message(&packet_data).await?;
             
-            // 存储会话信息
+            // 仅存储会话信息，不触发成功回调
+            // 等待服务器响应后再触发回调
             {
                 let mut stored_steam_id = self.steam_id.write().await;
                 *stored_steam_id = Some(steam_id);
@@ -315,45 +316,8 @@ impl SteamClient {
                 let mut stored_session_id = self.session_id.write().await;
                 *stored_session_id = Some(session_id);
             }
-            {
-                let mut logged_on = self.is_logged_on.write().await;
-                *logged_on = true;
-            }
 
-            // 触发登录成功回调
-            let callback = LoggedOnCallback {
-                result: crate::types::EResult::OK,
-                steam_id,
-                account_name: username,
-                cell_id: 0,
-                email_domain: String::new(),
-                parental_settings: Vec::new(),
-                count_loginfailures_to_migrate: 0,
-                count_disconnects_to_migrate: 0,
-                ogs_data_report_time_window: 0,
-                client_supplied_steam_id: steam_id.id,
-                ip_country_code: String::new(),
-                vanity_url: String::new(),
-                out_of_game_heartbeat_seconds: 30,
-                in_game_heartbeat_seconds: 30,
-                public_ip: Vec::new(),
-                server_time: get_unix_timestamp() as u32,
-                account_flags: 0,
-                facebook_id: 0,
-                facebook_name: String::new(),
-                steam_guard_notify_newmachines: false,
-                steam_guard_machine_name_user_chosen: String::new(),
-                is_steam_guard_machine_name_user_chosen: false,
-                request_id_verify_password: 0,
-                is_phone_verified: false,
-                two_factor_state: 0,
-                is_phone_identifying: false,
-                is_phone_needing_reverify: false,
-                timestamp: get_unix_timestamp(),
-            };
-            self.callback_manager.trigger(&callback);
-
-            log::info!("✅ 登录请求已发送，Steam ID: {}", steam_id.render());
+            log::info!("✅ 登录请求已发送，Steam ID: {}，等待服务器响应...", steam_id.render());
         }
 
         Ok(())

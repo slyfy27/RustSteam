@@ -222,19 +222,167 @@ impl ConnectionManager {
     async fn process_incoming_message(&self, message: Vec<u8>) -> Result<(), SteamError> {
         log::trace!("收到消息: {} 字节", message.len());
         
-        // Parse the message and trigger appropriate callbacks
-        // This would be expanded to handle different message types
-        if message.len() >= 4 {
-            let mut cursor = Cursor::new(&message);
-            if let Ok(msg_type) = cursor.read_u32::<LittleEndian>() {
-                log::debug!("消息类型: {}", msg_type);
-                
-                // TODO: Parse message and trigger callbacks based on message type
-                // For now, just log the message
+        // Parse Steam protocol message
+        if message.len() < 8 { // Minimum header size
+            log::warn!("消息太短，无法解析");
+            return Ok(());
+        }
+        
+        let mut cursor = Cursor::new(&message);
+        
+        // Read message type (first 4 bytes)
+        let raw_msg_type = cursor.read_u32::<LittleEndian>()
+            .map_err(|e| SteamError::Unknown { message: format!("读取消息类型失败: {}", e) })?;
+        
+        // Parse message type and check if it's extended
+        let is_extended = (raw_msg_type & 0x80000000) != 0;
+        let msg_type_id = raw_msg_type & 0x7FFFFFFF;
+        
+        log::debug!("消息类型: {} (扩展: {})", msg_type_id, is_extended);
+        
+        // Convert to EMsg enum if possible
+        let msg_type = crate::types::EMsg::from_u32(msg_type_id);
+        
+        if let Some(parsed_msg_type) = msg_type {
+            // Extract message payload
+            let payload = if is_extended {
+                // Extended message: skip extended header (additional metadata)
+                if message.len() < 36 { // Extended header size
+                    log::warn!("扩展消息头不完整");
+                    return Ok(());
+                }
+                message[36..].to_vec() // Skip extended header
+            } else {
+                // Standard message: skip standard header
+                if message.len() < 20 { // Standard header size  
+                    log::warn!("标准消息头不完整");
+                    return Ok(());
+                }
+                message[20..].to_vec() // Skip standard header
+            };
+            
+            // Trigger callbacks based on message type
+            match parsed_msg_type {
+                crate::types::EMsg::ClientLogOnResponse => {
+                    log::info!("📥 收到登录响应");
+                    self.trigger_logon_response_callback(&payload).await;
+                }
+                crate::types::EMsg::ClientLoggedOff => {
+                    log::info!("📤 收到登出通知");  
+                    self.trigger_logoff_callback(&payload).await;
+                }
+                crate::types::EMsg::ChannelEncryptResult => {
+                    log::info!("🔐 收到加密结果");
+                    self.handle_encryption_result(&payload).await;
+                }
+                crate::types::EMsg::Multi => {
+                    log::debug!("📦 收到多消息包");
+                    self.handle_multi_message(&payload).await;
+                }
+                _ => {
+                    log::debug!("🔍 收到未处理的消息类型: {:?}", parsed_msg_type);
+                }
             }
+        } else {
+            log::warn!("⚠️ 未知的消息类型: {}", msg_type_id);
         }
         
         Ok(())
+    }
+    
+    /// Trigger login response callback
+    async fn trigger_logon_response_callback(&self, payload: &[u8]) {
+        // Parse login response from payload
+        // This would extract fields like result, steam_id, etc.
+        log::debug!("处理登录响应 payload: {} 字节", payload.len());
+        
+        // For now, create a basic success callback
+        // In a full implementation, this would parse the actual response
+        use crate::callbacks::{LoggedOnCallback, ConnectedCallback};
+        use crate::types::{EResult, SteamID};
+        use crate::utils::get_unix_timestamp;
+        
+        let callback = LoggedOnCallback {
+            result: EResult::OK,
+            steam_id: SteamID::new(76561198000000000), // Would be parsed from response
+            account_name: "user".to_string(), // Would be parsed from response
+            cell_id: 0, // Would be parsed from response
+            email_domain: None,
+            vac_banned: false,
+            extended_result: EResult::OK,
+        };
+        
+        self.callback_manager.trigger_callback(callback);
+    }
+    
+    /// Trigger logoff callback
+    async fn trigger_logoff_callback(&self, _payload: &[u8]) {
+        use crate::callbacks::LoggedOffCallback;
+        use crate::types::EResult;
+        
+        let callback = LoggedOffCallback {
+            result: EResult::OK,
+        };
+        
+        self.callback_manager.trigger_callback(callback);
+    }
+    
+    /// Handle encryption result
+    async fn handle_encryption_result(&self, payload: &[u8]) {
+        log::debug!("处理加密结果: {} 字节", payload.len());
+        
+        // Parse encryption result
+        if payload.len() >= 4 {
+            let mut cursor = Cursor::new(payload);
+            if let Ok(result) = cursor.read_u32::<LittleEndian>() {
+                if result == 1 { // EResult::OK
+                    log::info!("✅ 加密握手成功");
+                    // Trigger connected callback
+                    use crate::callbacks::ConnectedCallback;
+                    let callback = ConnectedCallback {
+                        server_time: std::time::SystemTime::now(),
+                    };
+                    self.callback_manager.trigger_callback(callback);
+                } else {
+                    log::error!("❌ 加密握手失败: {}", result);
+                }
+            }
+        }
+    }
+    
+    /// Handle multi-message packet
+    async fn handle_multi_message(&self, payload: &[u8]) {
+        log::debug!("处理多消息包: {} 字节", payload.len());
+        
+        // Multi messages contain multiple sub-messages
+        // Each sub-message has a length prefix followed by the message data
+        let mut cursor = Cursor::new(payload);
+        
+        while (cursor.position() as usize) < payload.len() {
+            // Read sub-message length
+            if let Ok(sub_msg_len) = cursor.read_u32::<LittleEndian>() {
+                let remaining = payload.len() - cursor.position() as usize;
+                if sub_msg_len as usize <= remaining {
+                    // Extract sub-message
+                    let start = cursor.position() as usize;
+                    let end = start + sub_msg_len as usize;
+                    let sub_message = &payload[start..end];
+                    
+                    // Recursively process sub-message
+                    if let Err(e) = self.process_incoming_message(sub_message.to_vec()).await {
+                        log::error!("处理子消息失败: {}", e);
+                    }
+                    
+                    // Move cursor
+                    cursor.set_position(end as u64);
+                } else {
+                    log::warn!("子消息长度超出范围");
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
     }
 
     /// Send a message

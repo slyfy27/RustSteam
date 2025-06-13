@@ -11,12 +11,12 @@ categories = ["network-programming", "api-bindings"]
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.45", features = ["full"] }
 async-trait = "0.1"
 
 # Networking
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+tokio-tungstenite = "0.21"
 futures-util = "0.3"
 
 # Serialization
@@ -40,6 +40,13 @@ byteorder = "1.5"
 
 # Testing
 mockall = "0.12"
+
+# RSA加密支持
+rsa = "0.9"
+num-bigint = "0.4"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

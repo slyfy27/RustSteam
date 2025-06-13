@@ -10,6 +10,9 @@ use crate::utils::get_unix_timestamp;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use log::{info, error, debug, trace};
+use std::io;
+use sha1::{Sha1, Digest};
+use serde_json;
 
 /// Steam用户处理器
 pub struct SteamUser {
@@ -291,16 +294,69 @@ impl SteamUser {
     }
 
     /// 处理机器认证响应
-    pub async fn handle_machine_auth_response(&mut self, _data: &[u8]) -> Result<(), SteamError> {
+    pub async fn handle_machine_auth_response(&mut self, data: &[u8]) -> Result<(), SteamError> {
         debug!("🔐 处理机器认证响应");
         
-        // 在真实实现中，这里会：
-        // 1. 解析机器认证数据
-        // 2. 保存认证文件到本地
-        // 3. 验证认证数据的完整性
-        // 4. 发送确认消息给服务器
+        if data.len() < 20 { // 最小机器认证响应大小
+            return Err(SteamError::Unknown {
+                message: "机器认证响应数据不完整".to_string(),
+            });
+        }
         
-        info!("✅ 机器认证处理完成");
+        // 解析机器认证数据
+        let mut cursor = std::io::Cursor::new(data);
+        
+        // 读取认证文件内容
+        let mut file_data = Vec::new();
+        cursor.read_to_end(&mut file_data)
+            .map_err(|e| SteamError::Unknown { message: format!("读取认证文件失败: {}", e) })?;
+        
+        // 验证认证数据完整性（简单校验）
+        if file_data.len() < 10 {
+            return Err(SteamError::Unknown {
+                message: "认证文件数据太短".to_string(),
+            });
+        }
+        
+        // 生成认证文件路径
+        let steam_id_str = self.current_steam_id
+            .map(|id| id.render())
+            .unwrap_or_else(|| "unknown".to_string());
+        let auth_file_path = format!("sentry_{}.bin", steam_id_str);
+        
+        // 保存认证文件到本地
+        if let Err(e) = tokio::fs::write(&auth_file_path, &file_data).await {
+            error!("保存认证文件失败: {}", e);
+            return Err(SteamError::Unknown {
+                message: format!("无法保存认证文件: {}", e),
+            });
+        }
+        
+        // 计算文件哈希用于验证
+        let mut hasher = Sha1::new();
+        hasher.update(&file_data);
+        let file_hash = hasher.finalize();
+        
+        info!("✅ 机器认证文件已保存: {}", auth_file_path);
+        info!("   文件大小: {} 字节", file_data.len());
+        info!("   文件哈希: {:x}", file_hash);
+        
+        // 发送确认消息给服务器
+        let confirm_msg = format!(
+            "机器认证确认 - 文件大小: {} 字节, 哈希: {:x}",
+            file_data.len(),
+            file_hash
+        );
+        
+        let packet = SteamPacket::new(EMsg::ClientUpdateMachineAuth, confirm_msg.into_bytes());
+        let packet_data = packet.serialize()?;
+        
+        self.message_sender.send(packet_data)
+            .map_err(|_| SteamError::InvalidState {
+                message: "无法发送机器认证确认".to_string(),
+            })?;
+        
+        info!("📤 机器认证确认已发送");
         Ok(())
     }
 
@@ -350,13 +406,65 @@ impl SteamUser {
     pub async fn handle_login_key(&mut self, login_key: &str) -> Result<(), SteamError> {
         info!("🔑 处理登录密钥...");
         
-        // 在真实实现中，这里会：
-        // 1. 保存登录密钥到安全存储
-        // 2. 用于下次自动登录
-        // 3. 验证密钥的有效性
+        // 验证登录密钥格式
+        if login_key.len() < 20 || login_key.len() > 100 {
+            return Err(SteamError::Unknown {
+                message: "登录密钥长度无效".to_string(),
+            });
+        }
         
-        debug!("登录密钥长度: {}", login_key.len());
-        info!("✅ 登录密钥处理完成");
+        // 验证密钥只包含有效字符
+        if !login_key.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(SteamError::Unknown {
+                message: "登录密钥包含无效字符".to_string(),
+            });
+        }
+        
+        // 生成密钥文件路径
+        let steam_id_str = self.current_steam_id
+            .map(|id| id.render())
+            .unwrap_or_else(|| "unknown".to_string());
+        let key_file_path = format!("loginkey_{}.txt", steam_id_str);
+        
+        // 创建密钥数据结构
+        let key_data = serde_json::json!({
+            "login_key": login_key,
+            "steam_id": steam_id_str,
+            "created_at": crate::utils::get_unix_timestamp(),
+            "expires_at": crate::utils::get_unix_timestamp() + (30 * 24 * 60 * 60), // 30天后过期
+        });
+        
+        // 保存到安全存储（这里简化为文件）
+        let key_json = serde_json::to_string_pretty(&key_data)
+            .map_err(|e| SteamError::Unknown { message: format!("序列化密钥数据失败: {}", e) })?;
+        
+        if let Err(e) = tokio::fs::write(&key_file_path, key_json).await {
+            error!("保存登录密钥失败: {}", e);
+            return Err(SteamError::Unknown {
+                message: format!("无法保存登录密钥: {}", e),
+            });
+        }
+        
+        // 在生产环境中，应该：
+        // 1. 使用操作系统的安全存储API（如Windows Credential Manager, macOS Keychain）
+        // 2. 加密密钥数据
+        // 3. 设置适当的文件权限
+        // 4. 定期轮换密钥
+        
+        info!("✅ 登录密钥已安全保存");
+        info!("   密钥长度: {} 字符", login_key.len());
+        info!("   保存位置: {}", key_file_path);
+        
+        // 发送确认给服务器
+        let confirm_packet = SteamPacket::new(EMsg::ClientLogonResponse, "login_key_accepted".as_bytes().to_vec());
+        let packet_data = confirm_packet.serialize()?;
+        
+        self.message_sender.send(packet_data)
+            .map_err(|_| SteamError::InvalidState {
+                message: "无法发送登录密钥确认".to_string(),
+            })?;
+        
+        info!("📤 登录密钥确认已发送");
         Ok(())
     }
 

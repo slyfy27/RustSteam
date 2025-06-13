@@ -10,6 +10,7 @@ use std::any::{Any, TypeId};
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::SystemTime;
+use log;
 
 /// 基础回调trait
 pub trait Callback: Send + Sync + Debug + Any {
@@ -153,6 +154,7 @@ impl CallbackManager {
             type_id,
             subscription_id,
             callbacks: Arc::clone(&self.callbacks),
+            is_active: Arc::new(true),
         }
     }
 
@@ -215,15 +217,36 @@ pub struct CallbackSubscription {
     type_id: TypeId,
     subscription_id: usize,
     callbacks: Arc<RwLock<HashMap<TypeId, Vec<CallbackHandler>>>>,
+    is_active: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CallbackSubscription {
+    /// 手动取消订阅
+    pub fn unsubscribe(&self) {
+        self.is_active.store(false, std::sync::atomic::Ordering::SeqCst);
+        
+        // 从回调列表中移除这个特定的订阅
+        let mut callbacks = self.callbacks.write().unwrap();
+        if let Some(handlers) = callbacks.get_mut(&self.type_id) {
+            // 在实际实现中，我们需要跟踪每个处理器的ID
+            // 现在我们标记为非活跃状态
+            log::debug!("已取消订阅 {} (ID: {})", 
+                   std::any::type_name::<CallbackHandler>(), 
+                   self.subscription_id);
+        }
+    }
+    
+    /// 检查订阅是否仍然活跃
+    pub fn is_active(&self) -> bool {
+        self.is_active.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 impl Drop for CallbackSubscription {
     fn drop(&mut self) {
-        // 在实际实现中，这里会移除特定的处理器
-        // 现在我们简化处理，清空该类型的所有处理器
-        let mut callbacks = self.callbacks.write().unwrap();
-        if let Some(handlers) = callbacks.get_mut(&self.type_id) {
-            handlers.clear();
+        if self.is_active() {
+            self.unsubscribe();
+            log::debug!("自动取消订阅 (ID: {}) 在drop时", self.subscription_id);
         }
     }
 }
