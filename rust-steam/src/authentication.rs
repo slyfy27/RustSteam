@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::fmt;
-use rsa::{RsaPublicKey, PaddingScheme, PublicKey};
+use rsa::{RsaPublicKey, PaddingScheme, PublicKeyParts};
 use num_bigint::BigUint;
 use hex;
 use rand;
