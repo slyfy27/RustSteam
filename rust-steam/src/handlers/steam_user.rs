@@ -186,6 +186,12 @@ impl SteamUser {
         
         Ok(())
     }
+
+    /// 机器认证详情响应处理
+    pub async fn handle_machine_auth_response(&self, _details: MachineAuthDetails) -> Result<(), SteamError> {
+        // 实现机器认证响应处理逻辑
+        todo!("Implement machine auth response handling")
+    }
 }
 
 /// Machine authentication details

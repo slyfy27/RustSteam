@@ -134,42 +134,36 @@ pub enum ProtocolType {
 /// Connection state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
+    /// 未连接
     Disconnected,
+    /// 正在连接
     Connecting,
+    /// 已连接
     Connected,
+    /// 正在断开连接
     Disconnecting,
 }
 
 /// Steam error types
 #[derive(Error, Debug)]
 pub enum SteamError {
+    /// 网络相关错误
     #[error("Network error: {0}")]
     Network(#[from] reqwest::Error),
     
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-    
-    #[error("Authentication error: {message}")]
+    /// 认证错误
+    #[error("Authentication failed: {message}")]
     Authentication { message: String },
     
-    #[error("Protocol error: {message}")]
-    Protocol { message: String },
-    
-    #[error("Steam result: {result:?}")]
-    Steam { result: EResult },
-    
-    #[error("Timeout error")]
-    Timeout,
-    
+    /// 无效状态错误
     #[error("Invalid state: {message}")]
     InvalidState { message: String },
     
-    #[error("Configuration error: {message}")]
-    Configuration { message: String },
+    /// 加密相关错误
+    #[error("Crypto error: {0}")]
+    Crypto(String),
     
+    /// 未知错误
     #[error("Unknown error: {message}")]
     Unknown { message: String },
 }

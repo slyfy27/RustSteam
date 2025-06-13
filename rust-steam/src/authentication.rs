@@ -6,6 +6,8 @@ use crate::types::{EResult, SteamError, SteamID};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
+use async_trait::async_trait;
+use std::sync::Arc;
 
 /// Authentication session details
 #[derive(Debug, Clone, Default)]
@@ -14,7 +16,7 @@ pub struct AuthSessionDetails {
     pub password: String,
     pub persistent_session: bool,
     pub guard_data: Option<String>,
-    pub authenticator: Option<Box<dyn Authenticator>>,
+    pub authenticator: Option<Arc<dyn Authenticator>>,
     pub website_id: String,
     pub device_friendly_name: String,
     pub platform_type: EAuthTokenPlatformType,
@@ -86,13 +88,27 @@ impl Default for EAuthTokenPlatformType {
     }
 }
 
+/// 认证选项配置
+#[derive(Debug, Default)]
+pub struct AuthenticationOptions {
+    /// 认证器实现
+    pub authenticator: Option<Arc<dyn Authenticator>>,
+    /// 设备名称
+    pub device_name: String,
+    /// 平台类型
+    pub platform_type: EPlatformType,
+    /// 网站ID
+    pub website_id: String,
+}
+
 /// Authenticator trait for handling 2FA challenges
+#[async_trait]
 pub trait Authenticator: Send + Sync + std::fmt::Debug {
     /// Handle device confirmation (mobile authenticator)
     async fn accept_device_confirmation(&self) -> Result<(), SteamError>;
     
     /// Get email code from user
-    async fn get_email_code(&self, email_domain: &str, code_hint: Option<&str>) -> Result<String, SteamError>;
+    async fn get_email_code(&self, email_domain: &str, code_hint: Option<String>) -> Result<String, SteamError>;
     
     /// Get device code from user (TOTP code)
     async fn get_device_code(&self, previous_incorrect: bool) -> Result<String, SteamError>;
@@ -109,7 +125,7 @@ impl Authenticator for ConsoleAuthenticator {
         Ok(())
     }
     
-    async fn get_email_code(&self, email_domain: &str, code_hint: Option<&str>) -> Result<String, SteamError> {
+    async fn get_email_code(&self, email_domain: &str, code_hint: Option<String>) -> Result<String, SteamError> {
         println!("Please enter the code sent to your email at {}", email_domain);
         if let Some(hint) = code_hint {
             println!("Code hint: {}", hint);

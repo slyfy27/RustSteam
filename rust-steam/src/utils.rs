@@ -100,17 +100,22 @@ pub fn sha256_hash(data: &[u8]) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-/// Generate HMAC-SHA1
-pub fn hmac_sha1(key: &[u8], data: &[u8]) -> Vec<u8> {
+#[cfg(feature = "crypto")]
+mod crypto_utils {
+    use sha1::{Sha1, Digest};
+    use sha2::{Sha256, Digest as Sha2Digest};
     use hmac::{Hmac, Mac};
-    use sha1::Sha1;
-    
-    type HmacSha1 = Hmac<Sha1>;
-    
-    let mut mac = HmacSha1::new_from_slice(key)
-        .expect("HMAC can take key of any size");
-    mac.update(data);
-    mac.finalize().into_bytes().to_vec()
+    use crate::types::SteamError;
+
+    pub type HmacSha1 = Hmac<Sha1>;
+
+    /// 计算HMAC-SHA1
+    pub fn hmac_sha1(key: &[u8], data: &[u8]) -> Result<Vec<u8>, SteamError> {
+        let mut mac = HmacSha1::new_from_slice(key)
+            .map_err(|e| SteamError::Crypto(format!("Failed to create HMAC: {}", e)))?;
+        mac.update(data);
+        Ok(mac.finalize().into_bytes().to_vec())
+    }
 }
 
 /// Base64 encode

@@ -99,10 +99,10 @@ impl ConnectionManager {
             *state = ConnectionState::Disconnected;
         }
 
-        Err(SteamError::Network(reqwest::Error::from(std::io::Error::new(
+        Err(SteamError::Network(std::io::Error::new(
             std::io::ErrorKind::ConnectionRefused,
             "Failed to connect with any protocol",
-        ))))
+        ).to_string()))
     }
 
     /// Try to connect using a specific protocol
@@ -212,8 +212,8 @@ impl Connection for TcpConnection {
     async fn connect(&mut self) -> Result<(), SteamError> {
         log::debug!("Connecting TCP to {}", self.address);
         
-        let stream = TcpStream::connect(&self.address).await
-            .map_err(|e| SteamError::Network(reqwest::Error::from(e)))?;
+        let stream = TcpStream::connect(&self.address)
+            .map_err(|e| SteamError::Network(e.to_string()))?;
         
         self.stream = Some(stream);
         self.connected = true;

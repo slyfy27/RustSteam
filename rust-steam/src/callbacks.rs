@@ -5,10 +5,12 @@
 
 use crate::types::{EResult, SteamID, SteamError};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::mpsc;
 use std::any::Any;
 use std::fmt::Debug;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::any::TypeId;
 
 /// Base trait for all callbacks
 pub trait Callback: Send + Sync + Debug + Any {
@@ -150,11 +152,11 @@ pub struct CallbackEvent {
     pub callback: Box<dyn Callback>,
 }
 
-/// Callback manager for routing and handling callbacks
+/// 回调管理器 - 负责管理所有回调订阅
+#[derive(Debug)]
 pub struct CallbackManager {
-    handlers: Arc<Mutex<HashMap<String, Vec<Box<dyn Any + Send + Sync>>>>>,
-    event_receiver: Arc<Mutex<Option<mpsc::Receiver<CallbackEvent>>>>,
-    event_sender: mpsc::Sender<CallbackEvent>,
+    callbacks: Arc<RwLock<HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>>>,
+    should_shutdown: Arc<AtomicBool>,
 }
 
 impl CallbackManager {
@@ -163,9 +165,8 @@ impl CallbackManager {
         let (tx, rx) = mpsc::channel(1000);
         
         Self {
-            handlers: Arc::new(Mutex::new(HashMap::new())),
-            event_receiver: Arc::new(Mutex::new(Some(rx))),
-            event_sender: tx,
+            callbacks: Arc::new(RwLock::new(HashMap::new())),
+            should_shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -180,7 +181,7 @@ impl CallbackManager {
             Box::new(Arc::new(handler) as Arc<dyn Fn(T) + Send + Sync>);
 
         {
-            let mut handlers = self.handlers.lock().unwrap();
+            let mut handlers = self.callbacks.write().unwrap();
             handlers.entry(type_name.to_string())
                 .or_insert_with(Vec::new)
                 .push(boxed_handler);
@@ -188,7 +189,7 @@ impl CallbackManager {
 
         CallbackSubscription {
             type_name: type_name.to_string(),
-            handlers: Arc::clone(&self.handlers),
+            handlers: Arc::clone(&self.callbacks),
         }
     }
 
@@ -202,7 +203,7 @@ impl CallbackManager {
         let timeout = std::time::Duration::from_millis(timeout_ms);
         
         let mut receiver = {
-            let mut guard = self.event_receiver.lock().unwrap();
+            let mut guard = self.callbacks.write().unwrap();
             guard.take()
         };
 
@@ -220,7 +221,7 @@ impl CallbackManager {
             }
             
             // Put receiver back
-            let mut guard = self.event_receiver.lock().unwrap();
+            let mut guard = self.callbacks.write().unwrap();
             *guard = Some(rx);
         }
     }
@@ -230,7 +231,7 @@ impl CallbackManager {
         let callback_type = event.callback.callback_type();
         
         let handlers = {
-            let guard = self.handlers.lock().unwrap();
+            let guard = self.callbacks.read().unwrap();
             guard.get(callback_type).cloned()
         };
 
@@ -273,12 +274,12 @@ impl Default for CallbackManager {
 /// RAII subscription handle that unsubscribes when dropped
 pub struct CallbackSubscription {
     type_name: String,
-    handlers: Arc<Mutex<HashMap<String, Vec<Box<dyn Any + Send + Sync>>>>>,
+    handlers: Arc<RwLock<HashMap<String, Vec<Box<dyn Any + Send + Sync>>>>>,
 }
 
 impl Drop for CallbackSubscription {
     fn drop(&mut self) {
-        let mut handlers = self.handlers.lock().unwrap();
+        let mut handlers = self.handlers.write().unwrap();
         if let Some(handler_list) = handlers.get_mut(&self.type_name) {
             // In a real implementation, you'd want to track which specific handler to remove
             // For simplicity, we'll clear all handlers of this type when any subscription drops

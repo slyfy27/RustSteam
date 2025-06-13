@@ -116,15 +116,11 @@ impl SteamClient {
     }
 
     /// Get a handler by type
-    pub fn get_handler<T: 'static>(&self) -> Option<&T> {
-        let handlers = self.handlers.lock().unwrap();
+    pub fn get_handler<T: 'static>(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         let type_name = std::any::type_name::<T>();
-        
-        // Extract the simple type name from the full path
         let simple_name = type_name.split("::").last().unwrap_or(type_name);
         
-        handlers.get(simple_name)
-            .and_then(|handler| handler.downcast_ref::<T>())
+        self.handlers.lock().unwrap().get(simple_name).cloned()
     }
 
     /// Get the callback manager
