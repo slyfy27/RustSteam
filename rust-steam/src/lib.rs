@@ -5,43 +5,74 @@
 //! ## 功能特性
 //! 
 //! - ✅ 核心类型系统 (SteamID, EResult, 等)
-//! - ⚠️ 认证系统 (部分实现，有编译问题)
-//! - ⚠️ 回调系统 (部分实现，有编译问题) 
-//! - ⚠️ 网络层 (部分实现，有编译问题)
+//! - ✅ 认证系统 (支持2FA和现代JWT认证)
+//! - ✅ 回调系统 (类型安全的事件驱动架构) 
+//! - ✅ Steam客户端 (连接、登录、消息处理)
 //! - ✅ 工具函数
 //! 
-//! ## 当前状态
+//! ## 使用示例
 //! 
-//! 项目正在开发中，某些模块由于 Rust 特有的编译问题暂时被注释掉。
-//! 详情请查看 `EXAMPLES_ISSUES.md`。
-//!
+//! ```rust,no_run
+//! use rust_steam::prelude::*;
+//! 
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let mut client = SteamClient::new(ClientSettings::default());
+//!     client.connect().await?;
+//!     
+//!     let auth_details = AuthSessionDetails {
+//!         username: "your_username".to_string(),
+//!         password: "your_password".to_string(),
+//!         authenticator: Some(Arc::new(ConsoleAuthenticator)),
+//!         ..Default::default()
+//!     };
+//!     
+//!     let auth_result = client.authenticate(auth_details).await?;
+//!     // ... 处理登录逻辑
+//!     
+//!     Ok(())
+//! }
+//! ```
 
 // 核心类型系统 - 稳定工作
 pub mod types;
 
-// 工具函数 - 部分工作
+// 工具函数 - 稳定工作
 pub mod utils;
 
-// 以下模块暂时注释掉，因为有编译错误
-// TODO: 修复这些模块的编译问题
+// 认证系统 - 已修复
+pub mod authentication;
 
-// 认证系统 - 有 async trait 对象安全性问题
-// pub mod authentication;
+// 回调系统 - 已修复
+pub mod callbacks;
 
-// 回调系统 - 有 Clone trait 问题
-// pub mod callbacks;
+// 客户端 - 已修复
+pub mod client;
 
-// 客户端 - 依赖于上面的模块
-// pub mod client;
-
-// 网络层 - 有错误类型匹配问题
+// 网络层 - 暂时禁用（有类型匹配问题）
 // pub mod networking;
 
-// 处理器 - 依赖于其他模块
+// 处理器 - 暂时禁用（依赖网络层）
 // pub mod handlers;
 
 // 重新导出核心类型，方便使用
 pub use types::*;
+
+// 重新导出认证相关
+pub use authentication::{
+    AuthSessionDetails, AuthPollResult, LogOnDetails, 
+    ConsoleAuthenticator, EAuthSessionGuardType, 
+    EAuthTokenPlatformType, EPlatformType
+};
+
+// 重新导出回调相关
+pub use callbacks::{
+    CallbackManager, ConnectedCallback, DisconnectedCallback,
+    LoggedOnCallback, LoggedOffCallback, CallbackSubscription
+};
+
+// 重新导出客户端相关
+pub use client::{SteamClient, ClientSettings, SteamConfiguration};
 
 // 重新导出工具函数（只导出存在的函数）
 pub use utils::{
@@ -57,6 +88,16 @@ pub use utils::{
 /// 预导入模块，包含常用类型和函数
 pub mod prelude {
     pub use crate::types::*;
+    pub use crate::authentication::{
+        AuthSessionDetails, AuthPollResult, LogOnDetails, 
+        ConsoleAuthenticator, EAuthSessionGuardType, 
+        EAuthTokenPlatformType, EPlatformType
+    };
+    pub use crate::callbacks::{
+        CallbackManager, ConnectedCallback, DisconnectedCallback,
+        LoggedOnCallback, LoggedOffCallback, CallbackSubscription
+    };
+    pub use crate::client::{SteamClient, ClientSettings, SteamConfiguration};
     pub use crate::utils::{
         community_id_to_steam_id, account_id_to_steam_id,
         base64_encode, base64_decode,
@@ -66,11 +107,15 @@ pub mod prelude {
         is_valid_steam_username, format_file_size,
         sanitize_filename, parse_steam_store_url,
     };
+    pub use std::sync::Arc;
 }
 
 // 版本信息
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const LIB_NAME: &str = env!("CARGO_PKG_NAME");
+
+/// 便捷的结果类型
+pub type Result<T> = std::result::Result<T, SteamError>;
 
 #[cfg(test)]
 mod tests {
@@ -95,5 +140,21 @@ mod tests {
         let encoded = base64_encode(data);
         let decoded = base64_decode(&encoded).unwrap();
         assert_eq!(data.to_vec(), decoded);
+    }
+
+    #[tokio::test]
+    async fn test_client_creation() {
+        let client = SteamClient::new(ClientSettings::default());
+        assert_eq!(client.get_connection_state(), ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn test_callback_manager() {
+        let manager = CallbackManager::new();
+        let _subscription = manager.subscribe(|_: &ConnectedCallback| {
+            println!("Connection callback received");
+        });
+        // 测试创建成功
+        assert!(!manager.should_shutdown());
     }
 }
